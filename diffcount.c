@@ -36,8 +36,6 @@ int main(int argc, char **argv)
 	unsigned char equal_mode = 0;
 	unsigned char fraction_mode = 0;
 
-	char constant_value = 0x00;
-
 	char *filename1;
 	char *filename2;
 
@@ -55,7 +53,7 @@ int main(int argc, char **argv)
 	unsigned char *data_buf_1;
 	unsigned char *data_buf_2;
 
-	unsigned char byte_xor;
+	unsigned char byte_xor, constant_value = 0;
 
 	data_buf_1 = malloc(BUFSIZE);
 	data_buf_2 = malloc(BUFSIZE);
@@ -69,6 +67,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	// TODO: Move to using getopt_long for argument passing
 	for (int i = 1; i <= argc-3; i++) {
 		if((strcmp(argv[i], "-b") == 0) || 
 		   (strcmp(argv[i], "--bit") == 0)) {
@@ -103,7 +102,7 @@ int main(int argc, char **argv)
 		fprintf(stderr,
 		        "Error opening file %s\n",
 		        filename1);
-		return 1;
+		exit(EXIT_FAILURE);
 	}
 
 	// Get the size of file1
@@ -111,17 +110,19 @@ int main(int argc, char **argv)
 		fprintf(stderr,
 		        "Error seeking to SEEK_END of %s\n",
 			filename1);
+		exit(EXIT_FAILURE);
 	}
 	file_size_1 = ftello(stream1);
 	if(fseeko(stream1, 0, 0) != 0) {
 		fprintf(stderr,
 		        "Error seeking to beginning of %s\n",
 		        filename1);
+		exit(EXIT_FAILURE);
 	}
 
 	// If constant mode, get the value of the byte
 	if (constant_mode == 1) {
-		sscanf(argv[argc-1], "%hhx", &constant_value);
+		constant_value = (unsigned char)strtol(argv[argc-1], NULL, 0);
 		min_file_size = file_size_1;
 	} else {
 		//Otherwise, open file2 and get its size
@@ -132,13 +133,16 @@ int main(int argc, char **argv)
 			fprintf(stderr,
 			        "Error opening file %s\n",
 			        filename2);
-			return 1;
+			fclose(stream1);
+			exit(EXIT_FAILURE);
 		}
 
 		if(fseeko(stream2, 0, SEEK_END) != 0) {
 			fprintf(stderr,
 			        "Error seeking to SEEK_END of %s\n",
 			        filename2);
+			fclose(stream1);
+			exit(EXIT_FAILURE);
 		}
 
 		file_size_2 = ftello(stream2);
@@ -146,14 +150,16 @@ int main(int argc, char **argv)
 			fprintf(stderr,
 			        "Error seeking to beginning of %s\n",
 			        filename2);
+			fclose(stream1);
+			exit(EXIT_FAILURE);
 		}
 
 		if (file_size_1 != file_size_2) {
 			fprintf(stderr,
-			        "File sizes differ. File 1: %llu bytes; File 2: %llu bytes\n",
+			        "File sizes differ. File 1: %llu bytes; "
+			        " File 2: %llu bytes\n"
+				" Only comparing up to the smaller file size.\n",
 			        file_size_1, file_size_2);
-			fprintf(stderr,
-			        "Only comparing across the smaller file size.\n");
 		}
 
 		if (file_size_1 < file_size_2) {
@@ -168,8 +174,11 @@ int main(int argc, char **argv)
 		memset(data_buf_2, constant_value, BUFSIZE);
 	}
 
+	// TODO: Take advantage of 64-bit registers to process 8 bytes
+	// at a time when possible
 	for(off_t i=0; i < min_file_size; i++) {
 		// Fill up the buffer if we're at the beginning.
+		// TODO: threads for keeping the buffer full?
 		if (buf_cnt == 0) {
 			fread(data_buf_1, BUFSIZE, 1, stream1);
 			if (constant_mode == 0) {
@@ -208,6 +217,17 @@ int main(int argc, char **argv)
 		}
 	}
 
+	// Close the files
+	fclose(stream1);
+	if (constant_mode == 0) {
+		fclose(stream2);
+	}
+
+	// Free the data buffers
+	free(data_buf_1);
+	free(data_buf_2);
+
+	// TODO: Add sanity to the output process
 	if (equal_mode) {
 		if (byte_mode) {
 			if (fraction_mode) {
@@ -247,15 +267,6 @@ int main(int argc, char **argv)
 			fprintf(stdout, "%llu\n", diff_count);
 		}
 	}
-	// Close the files
-	fclose(stream1);
-	if (constant_mode == 0) {
-		fclose(stream2);
-	}
-
-	// Free the data buffers
-	free(data_buf_1);
-	free(data_buf_2);
 
 	return 0;
 }

@@ -3,7 +3,7 @@
  * Count the number of bit differences or byte differences    *
  * between two files. Computes byte differences by default.   *
  *                                                            *
- * Usage: count_byte_diff [-b/-B] filename1 filename2         *
+ * Usage: diffcount [-b/-B] filename1 filename2               *
  * -b or --bit: enables bit-differencing mode                 *
  * -B or --byte: enables byte-differencing mode (default)     *
  * -c or --constant: compare to constant hexadecimal byte     *
@@ -14,8 +14,8 @@
  *                   a fraction over the size of the          *
  *                   compared segment
  *                                                            *
- * To compile: gcc -march=broadwell -O3 -o count_byte_diff /  *
- *             count_byte_diff.c                              *
+ * To compile: gcc -march=broadwell -O3 -o diffcount /        *
+ *             diffcount.c                                    *
  *                                                            *
  **************************************************************/
 

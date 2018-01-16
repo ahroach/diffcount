@@ -30,39 +30,40 @@
 
 int main(int argc, char **argv) 
 {
-	unsigned char bit_mode = 0;
-	unsigned char byte_mode = 1;
-	unsigned char constant_mode = 0;
-	unsigned char equal_mode = 0;
-	unsigned char fraction_mode = 0;
+	int bit_mode = 0;
+	int byte_mode = 1;
+	int constant_mode = 0;
+	int equal_mode = 0;
+	int fraction_mode = 0;
+	int verbose = 0;
 
-	char *filename1;
-	char *filename2;
+	char *fname_1;
+	char *fname_2;
 
-	FILE *stream1;
-	FILE *stream2;
+	FILE *stream1 = NULL;
+	FILE *stream2 = NULL;
 
-	off_t file_size_1;
-	off_t file_size_2;
+	off_t fsize_1;
+	off_t fsize_2;
 
-	off_t min_file_size;
-	off_t diff_count = 0;
+	off_t cmp_size = 0;
+	off_t diff_cnt = 0;
 
 	off_t buf_cnt = 0;
 
-	unsigned char *data_buf_1;
-	unsigned char *data_buf_2;
+	unsigned char *buf_1;
+	unsigned char *buf_2;
 
 	unsigned char byte_xor, constant_value = 0;
 
-	data_buf_1 = malloc(BUFSIZE);
-	data_buf_2 = malloc(BUFSIZE);
+	buf_1 = malloc(BUFSIZE);
+	buf_2 = malloc(BUFSIZE);
 
 
 	// Parse the command line arguments
 	if (argc < 3) {
 		fprintf(stderr,
-		        "usage: %s [-b/-B/-c/-f/-e] filename1 [filename2/const_byte_value]\n",
+		        "usage: %s [-b/-B/-c/-f/-e] fname_1 [fname_2/const_byte_value]\n",
 		        argv[0]);
 		return 1;
 	}
@@ -94,14 +95,14 @@ int main(int argc, char **argv)
 		}
 	}
 
-	filename1 = argv[argc-2];
+	fname_1 = argv[argc-2];
 
 	// Open file1
-	stream1 = fopen(filename1, "r");
+	stream1 = fopen(fname_1, "r");
 	if (errno != 0) {
 		fprintf(stderr,
 		        "Error opening file %s\n",
-		        filename1);
+		        fname_1);
 		exit(EXIT_FAILURE);
 	}
 
@@ -109,30 +110,33 @@ int main(int argc, char **argv)
 	if(fseeko(stream1, 0, SEEK_END) != 0) {
 		fprintf(stderr,
 		        "Error seeking to SEEK_END of %s\n",
-			filename1);
+			fname_1);
+		fclose(stream1);
 		exit(EXIT_FAILURE);
 	}
-	file_size_1 = ftello(stream1);
+	fsize_1 = ftello(stream1);
 	if(fseeko(stream1, 0, 0) != 0) {
 		fprintf(stderr,
 		        "Error seeking to beginning of %s\n",
-		        filename1);
+		        fname_1);
+		fclose(stream1);
 		exit(EXIT_FAILURE);
 	}
 
 	// If constant mode, get the value of the byte
 	if (constant_mode == 1) {
 		constant_value = (unsigned char)strtol(argv[argc-1], NULL, 0);
-		min_file_size = file_size_1;
+		cmp_size = cmp_size == 0 ? fsize_1 : cmp_size;
+		}
 	} else {
 		//Otherwise, open file2 and get its size
-		filename2 = argv[argc-1];
+		fname_2 = argv[argc-1];
 
-		stream2 = fopen(filename2, "r");
+		stream2 = fopen(fname_2, "r");
 		if (errno != 0) {
 			fprintf(stderr,
 			        "Error opening file %s\n",
-			        filename2);
+			        fname_2);
 			fclose(stream1);
 			exit(EXIT_FAILURE);
 		}
@@ -140,65 +144,65 @@ int main(int argc, char **argv)
 		if(fseeko(stream2, 0, SEEK_END) != 0) {
 			fprintf(stderr,
 			        "Error seeking to SEEK_END of %s\n",
-			        filename2);
+			        fname_2);
 			fclose(stream1);
+			fclose(stream2);
 			exit(EXIT_FAILURE);
 		}
 
-		file_size_2 = ftello(stream2);
+		fsize_2 = ftello(stream2);
 		if(fseeko(stream2, 0, 0) != 0) {
 			fprintf(stderr,
 			        "Error seeking to beginning of %s\n",
-			        filename2);
+			        fname_2);
 			fclose(stream1);
+			fclose(stream2);
 			exit(EXIT_FAILURE);
 		}
 
-		if (file_size_1 != file_size_2) {
-			fprintf(stderr,
-			        "File sizes differ. File 1: %llu bytes; "
-			        " File 2: %llu bytes\n"
-				" Only comparing up to the smaller file size.\n",
-			        file_size_1, file_size_2);
-		}
-
-		if (file_size_1 < file_size_2) {
-			min_file_size = file_size_1;
-		} else {
-			min_file_size = file_size_2;
+		if (cmp_size == 0) {
+			cmp_size = fsize_1 < fsize_2 ? fsize_1 : fsize_2;
+			if ((fsize_1 != fsize_2) && verbose) {
+				fprintf(stderr,
+				        "File sizes differ.\n"
+				        "File 1: %llu bytes\n"
+				        "File 2: %llu bytes\n"
+				        "Comparing only %llu bytes\n",
+				        fsize_1, fsize_2, cmp_size);
+			}
 		}
 	}
 
 	//Fill the buffer with the constant value if we're using that.
 	if (constant_mode==1) {
-		memset(data_buf_2, constant_value, BUFSIZE);
+		memset(buf_2, constant_value, BUFSIZE);
 	}
 
 	// TODO: Take advantage of 64-bit registers to process 8 bytes
 	// at a time when possible
-	for(off_t i=0; i < min_file_size; i++) {
+	for(off_t i=0; i < cmp_size; i++) {
 		// Fill up the buffer if we're at the beginning.
 		// TODO: threads for keeping the buffer full?
 		if (buf_cnt == 0) {
-			fread(data_buf_1, BUFSIZE, 1, stream1);
+			fread(buf_1, BUFSIZE, 1, stream1);
 			if (constant_mode == 0) {
-				fread(data_buf_2, BUFSIZE, 1, stream2);
+				fread(buf_2, BUFSIZE, 1, stream2);
 			}
 		}
 
 		// Compare the bytes
 		if (byte_mode) {
-			if(data_buf_1[buf_cnt] != data_buf_2[buf_cnt]) {
-				diff_count++;
+			if(buf_1[buf_cnt] != buf_2[buf_cnt]) {
+				diff_cnt++;
 			}
 		} else if (bit_mode) {
-			byte_xor = data_buf_1[buf_cnt]^data_buf_2[buf_cnt];
+			byte_xor = buf_1[buf_cnt]^buf_2[buf_cnt];
 			/* 
 			// Slow way of counting bits, but should work
 			// on all architectures
 			while (byte_xor > 0) {
 				if ((byte_xor & 1) == 1) {
-					diff_count++;
+					diff_cnt++;
 				}
 				byte_xor = byte_xor >> 1;
 			}
@@ -207,7 +211,7 @@ int main(int argc, char **argv)
 			// Use the SSE4 instruction
 			// Need to compile with -march=broadwell,
 			// or another option supporting SSE4
-			diff_count += _mm_popcnt_u32(byte_xor);
+			diff_cnt += _mm_popcnt_u32(byte_xor);
 		}
 
 		// Increment buf_cnt; Wrap around if we're at the end.
@@ -217,15 +221,16 @@ int main(int argc, char **argv)
 		}
 	}
 
-	// Close the files
-	fclose(stream1);
-	if (constant_mode == 0) {
+	// Clean up
+	if (stream1 != NULL) {
+		fclose(stream1);
+	}
+	if (stream2 != NULL) {
 		fclose(stream2);
 	}
 
-	// Free the data buffers
-	free(data_buf_1);
-	free(data_buf_2);
+	free(buf_1);
+	free(buf_2);
 
 	// TODO: Add sanity to the output process
 	if (equal_mode) {
@@ -233,23 +238,23 @@ int main(int argc, char **argv)
 			if (fraction_mode) {
 				fprintf(stdout,
 				        "%.11g\n",
-				        1.0*(min_file_size-diff_count) /
-				        min_file_size);
+				        1.0*(cmp_size-diff_cnt) /
+				        cmp_size);
 			} else {
 				fprintf(stdout,
 				        "%llu\n",
-				        min_file_size-diff_count);
+				        cmp_size-diff_cnt);
 			}
 		} else if (bit_mode) {
 			if (fraction_mode) {
 				fprintf(stdout,
 				        "%.11g\n",
-				        1.0*(min_file_size*8-diff_count) /
-				        (min_file_size*8));
+				        1.0*(cmp_size*8-diff_cnt) /
+				        (cmp_size*8));
 			} else {
 				fprintf(stdout,
 				        "%llu\n",
-				        min_file_size*8-diff_count);
+				        cmp_size*8-diff_cnt);
 			}
 		} 
 	} else {
@@ -257,14 +262,14 @@ int main(int argc, char **argv)
 			if (byte_mode) {
 				fprintf(stdout,
 				        "%.11g\n",
-				        1.0*diff_count/min_file_size);
+				        1.0*diff_cnt/cmp_size);
 			} else if (bit_mode) {
 				fprintf(stdout,
 				        "%.11g\n",
-				        1.0*diff_count/(8*min_file_size));
+				        1.0*diff_cnt/(8*cmp_size));
 			}
 		} else {
-			fprintf(stdout, "%llu\n", diff_count);
+			fprintf(stdout, "%llu\n", diff_cnt);
 		}
 	}
 

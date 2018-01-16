@@ -25,6 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <smmintrin.h>
 
 
@@ -43,6 +45,8 @@ int main(int argc, char **argv)
 	FILE *stream1 = NULL;
 	FILE *stream2 = NULL;
 
+	struct stat sb;
+
 	off_t fsize_1;
 	off_t fsize_2;
 
@@ -55,9 +59,6 @@ int main(int argc, char **argv)
 	unsigned char *buf_2;
 
 	unsigned char byte_xor, constant_value = 0;
-
-	buf_1 = malloc(BUFSIZE);
-	buf_2 = malloc(BUFSIZE);
 
 
 	// Parse the command line arguments
@@ -98,30 +99,17 @@ int main(int argc, char **argv)
 	fname_1 = argv[argc-2];
 
 	// Open file1
-	stream1 = fopen(fname_1, "r");
-	if (errno != 0) {
-		fprintf(stderr,
-		        "Error opening file %s\n",
-		        fname_1);
+	if ((stream1 = fopen(fname_1, "r")) == NULL) {
+		perror("fopen");
 		exit(EXIT_FAILURE);
 	}
 
 	// Get the size of file1
-	if(fseeko(stream1, 0, SEEK_END) != 0) {
-		fprintf(stderr,
-		        "Error seeking to SEEK_END of %s\n",
-			fname_1);
-		fclose(stream1);
+	if (fstat(fname_1, &sb) == -1) {
+		perror("fstat");
 		exit(EXIT_FAILURE);
 	}
-	fsize_1 = ftello(stream1);
-	if(fseeko(stream1, 0, 0) != 0) {
-		fprintf(stderr,
-		        "Error seeking to beginning of %s\n",
-		        fname_1);
-		fclose(stream1);
-		exit(EXIT_FAILURE);
-	}
+	fsize_1 = sb.st_size;
 
 	// If constant mode, get the value of the byte
 	if (constant_mode == 1) {
@@ -132,33 +120,16 @@ int main(int argc, char **argv)
 		//Otherwise, open file2 and get its size
 		fname_2 = argv[argc-1];
 
-		stream2 = fopen(fname_2, "r");
-		if (errno != 0) {
-			fprintf(stderr,
-			        "Error opening file %s\n",
-			        fname_2);
-			fclose(stream1);
+		if ((stream2 = fopen(fname_2, "r")) == NULL) {
+			perror("fopen");
 			exit(EXIT_FAILURE);
 		}
-
-		if(fseeko(stream2, 0, SEEK_END) != 0) {
-			fprintf(stderr,
-			        "Error seeking to SEEK_END of %s\n",
-			        fname_2);
-			fclose(stream1);
-			fclose(stream2);
+		
+		if (fstat(fname_2, &sb) == -1) {
+			perror("fstat");
 			exit(EXIT_FAILURE);
 		}
-
-		fsize_2 = ftello(stream2);
-		if(fseeko(stream2, 0, 0) != 0) {
-			fprintf(stderr,
-			        "Error seeking to beginning of %s\n",
-			        fname_2);
-			fclose(stream1);
-			fclose(stream2);
-			exit(EXIT_FAILURE);
-		}
+		fsize_2 = sb.st_size;
 
 		if (cmp_size == 0) {
 			cmp_size = fsize_1 < fsize_2 ? fsize_1 : fsize_2;
@@ -171,6 +142,15 @@ int main(int argc, char **argv)
 				        fsize_1, fsize_2, cmp_size);
 			}
 		}
+	}
+
+	if ((buf_1 = malloc(BUFSIZE)) == NULL) {
+		perror("malloc");
+		exit(EXIT_FAILURE);
+	}
+	if ((buf_2 = malloc(BUFSIZE)) == NULL) {
+		perror("malloc");
+		exit(EXIT_FAILURE);
 	}
 
 	//Fill the buffer with the constant value if we're using that.

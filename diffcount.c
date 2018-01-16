@@ -100,13 +100,13 @@ int main(int argc, char **argv)
 
 	// Open file1
 	if ((stream1 = fopen(fname_1, "r")) == NULL) {
-		perror("fopen");
+		fprintf(stderr, "fopen: %s: %s\n", fname_1, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
 	// Get the size of file1
 	if (fstat(fname_1, &sb) == -1) {
-		perror("fstat");
+		fprintf(stderr, "fstat: %s: %s\n", fname_1, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 	fsize_1 = sb.st_size;
@@ -121,12 +121,14 @@ int main(int argc, char **argv)
 		fname_2 = argv[argc-1];
 
 		if ((stream2 = fopen(fname_2, "r")) == NULL) {
-			perror("fopen");
+			fprintf(stderr, "fopen: %s: %s", fname_2,
+			        strerror(errno));
 			exit(EXIT_FAILURE);
 		}
 		
 		if (fstat(fname_2, &sb) == -1) {
-			perror("fstat");
+			fprintf(stderr, "fstat: %s: %s\n", fname_2,
+			        strerror(errno));
 			exit(EXIT_FAILURE);
 		}
 		fsize_2 = sb.st_size;

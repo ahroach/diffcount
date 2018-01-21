@@ -98,40 +98,39 @@ int main(int argc, char **argv)
 
 	fname_1 = argv[argc-2];
 
+	// Get the size of file1
+	if (stat(fname_1, &sb) == -1) {
+		fprintf(stderr, "fstat: %s: %s\n", fname_1, strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	fsize_1 = sb.st_size;
+
 	// Open file1
 	if ((stream1 = fopen(fname_1, "r")) == NULL) {
 		fprintf(stderr, "fopen: %s: %s\n", fname_1, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
-	// Get the size of file1
-	if (fstat(fname_1, &sb) == -1) {
-		fprintf(stderr, "fstat: %s: %s\n", fname_1, strerror(errno));
-		exit(EXIT_FAILURE);
-	}
-	fsize_1 = sb.st_size;
-
 	// If constant mode, get the value of the byte
 	if (constant_mode == 1) {
-		constant_value = (unsigned char)strtol(argv[argc-1], NULL, 0);
-		cmp_size = cmp_size == 0 ? fsize_1 : cmp_size;
-		}
+		constant_value = (unsigned char)strtoul(argv[argc-1], NULL, 0);
+		cmp_size = (cmp_size == 0) ? fsize_1 : cmp_size;
 	} else {
 		//Otherwise, open file2 and get its size
 		fname_2 = argv[argc-1];
+
+		if (stat(fname_2, &sb) == -1) {
+			fprintf(stderr, "fstat: %s: %s\n", fname_2,
+			        strerror(errno));
+			exit(EXIT_FAILURE);
+		}
+		fsize_2 = sb.st_size;
 
 		if ((stream2 = fopen(fname_2, "r")) == NULL) {
 			fprintf(stderr, "fopen: %s: %s", fname_2,
 			        strerror(errno));
 			exit(EXIT_FAILURE);
 		}
-		
-		if (fstat(fname_2, &sb) == -1) {
-			fprintf(stderr, "fstat: %s: %s\n", fname_2,
-			        strerror(errno));
-			exit(EXIT_FAILURE);
-		}
-		fsize_2 = sb.st_size;
 
 		if (cmp_size == 0) {
 			cmp_size = fsize_1 < fsize_2 ? fsize_1 : fsize_2;

@@ -29,6 +29,13 @@
 #include <sys/stat.h>
 #include <smmintrin.h>
 
+static void arg_error(char **argv)
+{
+	fprintf(stderr,
+		"usage: %s [-b/-B/-c/-f/-e] file1 [file1/byte_val]\n",
+		argv[0]);
+	exit(EXIT_FAILURE);
+}
 
 int main(int argc, char **argv) 
 {
@@ -63,10 +70,7 @@ int main(int argc, char **argv)
 
 	// Parse the command line arguments
 	if (argc < 3) {
-		fprintf(stderr,
-		        "usage: %s [-b/-B/-c/-f/-e] fname_1 [fname_2/const_byte_value]\n",
-		        argv[0]);
-		return 1;
+		arg_error(argv);
 	}
 
 	// TODO: Move to using getopt_long for argument passing

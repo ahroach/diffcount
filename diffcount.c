@@ -31,6 +31,140 @@
 #include <sys/stat.h>
 #include <smmintrin.h>
 
+/* Structure for diffcount control */
+struct diffcount_ctl {
+	char *fname_1;
+	char *fname_2;
+	uint64_t skip_1;   /* Seek value for file 1 */
+	uint64_t skip_2;   /* Seek value for file 2 */
+	uint64_t max_len;  /* Maximum number of bytes to compare.
+	                      Go to first EOF if zero. */
+	int const_mode;    /* 0: Compare files.
+                              1: Compare file to constant byte */
+	uint8_t const_val; /* Constant byte value */
+};
+
+/* Structure for diffcount result */
+struct diffcount_res {
+	uint64_t comp_B;   /* Total number of bytes compared */
+	uint64_t diff_B;   /* Number of different bytes */
+	uint64_t diff_b;   /* Number of different bits */
+};
+
+static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
+{
+	unsigned char *buf_1;
+	unsigned char *buf_2;
+
+	FILE *stream_1 = NULL;
+	FILE *stream_2 = NULL;
+
+	struct diffcount_res *dr;
+
+	uint8_t byte_xor;
+	uint64_t buf_cnt, ctr, buf1_cnt, buf2_cnt;
+	int buf_underfill;
+
+	/* Better performance using independent local variables. Assign
+	 * to the struct at the end of the function */
+	uint64_t comp_B = 0;
+	uint64_t diff_B = 0;
+	uint64_t diff_b = 0;
+
+	if ((stream_1 = fopen(dc->fname_1, "r")) == NULL) {
+		fprintf(stderr, "fopen %s: %s\n",
+		        dc->fname_1, strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	if (dc->const_mode == 0) {
+		if ((stream_2 = fopen(dc->fname_2, "r")) == NULL) {
+			fprintf(stderr, "fopen %s: %s",
+			        dc->fname_2, strerror(errno));
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	if ((buf_1 = malloc(BUFSIZE)) == NULL) {
+		perror("malloc buf_1");
+		exit(EXIT_FAILURE);
+	}
+	if ((buf_2 = malloc(BUFSIZE)) == NULL) {
+		perror("malloc buf_2");
+		exit(EXIT_FAILURE);
+	}
+
+	/* Fill buffer 2 with the constant value in constant mode */
+	if (dc->const_mode == 1) {
+		memset(buf_2, dc->const_val, BUFSIZE);
+	}
+
+	/* TODO: Take advantage of 64-bit registers to process 8 bytes
+	   at a time when possible */
+	buf_cnt = 0;
+	buf_underfill = 0;
+	ctr = 0;
+	while((comp_B < dc->max_len) || (dc->max_len == 0)) {
+		/* Fill up the buffer if empty */
+		/* TODO: threads for better performance */
+		if (ctr == buf_cnt) {
+			if (buf_underfill == 1) break;
+
+			buf1_cnt = fread(buf_1, 1, BUFSIZE, stream_1);
+
+			if (dc->const_mode == 1) {
+				buf_cnt = buf1_cnt;
+			} else {
+				buf2_cnt = fread(buf_2, 1, BUFSIZE, stream_2);
+				buf_cnt = buf1_cnt < buf2_cnt ?
+				            buf1_cnt : buf2_cnt;
+			}
+
+			buf_underfill = buf_cnt < BUFSIZE ? 1 : 0;
+			ctr = 0;
+		}
+
+		if(buf_1[ctr] != buf_2[ctr]) {
+			diff_B++;
+		}
+
+		byte_xor = buf_1[ctr]^buf_2[ctr];
+		/*
+		// Slow way of counting bits, but should work
+		// on all architectures
+		while (byte_xor > 0) {
+			if ((byte_xor & 1) == 1) {
+				diff_cnt++;
+			}
+			byte_xor = byte_xor >> 1;
+		}
+		*/
+
+		// Use the SSE4 instruction
+		// Need to compile with -march=broadwell,
+		// or another option supporting SSE4
+		diff_b += _mm_popcnt_u32(byte_xor);
+
+		ctr++;
+		comp_B++;
+	}
+
+	fclose(stream_1);
+	if (stream_2 != NULL) fclose(stream_2);
+	free(buf_1);
+	free(buf_2);
+
+	if ((dr = malloc(sizeof(struct diffcount_res))) == NULL) {
+		perror("malloc dr");
+		exit(EXIT_FAILURE);
+	}
+	dr->comp_B = comp_B;
+	dr->diff_B = diff_B;
+	dr->diff_b = diff_b;
+
+	return dr;
+}
+
 static void show_help(char **argv, int verbose)
 {
 	printf("Usage: %s [-ch] [-n len] file file/constant [skip1] [skip2]\n",
@@ -47,43 +181,35 @@ static void show_help(char **argv, int verbose)
 int main(int argc, char **argv) 
 {
 	int opt;
-	int bit_mode = 0;
-	int byte_mode = 1;
-	int constant_mode = 0;
-	int equal_mode = 0;
-	int fraction_mode = 0;
-
-	char *fname1;
-	char *fname2;
-
-	FILE *stream1 = NULL;
-	FILE *stream2 = NULL;
 
 	struct stat sb;
+	uint64_t fsize_1, fsize_2;
 
-	uint64_t fsize_1;
-	uint64_t fsize_2;
+	struct diffcount_ctl *dc;
+	struct diffcount_res *dr;
 
-	uint64_t max_len = 0;
 
-	uint64_t diff_cnt = 0;
+	/* Allocate the diffcnt_ctl structure and set defaults */
+	if ((dc = malloc(sizeof(struct diffcount_ctl))) == NULL) {
+		perror("malloc dc");
+		exit(EXIT_FAILURE);
+	}
+	dc->fname_1 = NULL;
+	dc->fname_2 = NULL;
+	dc->skip_1 = 0;
+	dc->skip_2 = 0;
+	dc->max_len = 0;
+	dc->const_mode = 0;
+	dc->const_val = 0;
 
-	uint64_t skip1, skip2;
-
-	uint64_t buf_cnt = 0;
-
-	unsigned char *buf_1;
-	unsigned char *buf_2;
-
-	unsigned char byte_xor, comp_val = 0;
-
+	/* Get command line arguments */
 	while ((opt = getopt(argc, argv, "cn:h")) != -1) {
 		switch (opt) {
 		case 'n':
-			max_len = strtoull(optarg, NULL, 0);
+			dc->max_len = strtoull(optarg, NULL, 0);
 			break;
 		case 'c':
-			constant_mode = 1;
+			dc->const_mode = 1;
 			break;
 		case 'h':
 			show_help(argv, 1);
@@ -93,165 +219,43 @@ int main(int argc, char **argv)
 		}
 	}
 
-	// Get remaining arguments
 	if ((argc - optind) < 2) show_help(argv, 0);
-	fname1 = argv[optind++];
+	dc->fname_1 = argv[optind++];
 
-	if (constant_mode)
-		comp_val = strtoul(argv[optind++], NULL, 0);
+	if (dc->const_mode)
+		dc->const_val = strtoul(argv[optind++], NULL, 0);
 	else
-		fname2 = argv[optind++];
+		dc->fname_2 = argv[optind++];
 
-	skip1 = (optind < argc) ? strtoull(argv[optind++], NULL, 0) : 0;
-	skip2 = (optind < argc) ? strtoull(argv[optind++], NULL, 0) : 0;
+	dc->skip_1 = (optind < argc) ? strtoull(argv[optind++], NULL, 0) : 0;
+	dc->skip_2 = (optind < argc) ? strtoull(argv[optind++], NULL, 0) : 0;
 
 	if (optind < argc) show_help(argv, 0); //Leftover arguments
 
 	// Get the size of file1
-	if (stat(fname1, &sb) == -1) {
-		fprintf(stderr, "fstat: %s: %s\n", fname1, strerror(errno));
+	if (stat(dc->fname_1, &sb) == -1) {
+		fprintf(stderr, "fstat: %s: %s\n", dc->fname_1, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 	fsize_1 = sb.st_size;
 
-	// Open file1
-	if ((stream1 = fopen(fname1, "r")) == NULL) {
-		fprintf(stderr, "fopen: %s: %s\n", fname1, strerror(errno));
-		exit(EXIT_FAILURE);
-	}
+	dr = diffcount(dc);
 
-	if (constant_mode == 0) {
-		//Open file2 and get its size
-		if (stat(fname2, &sb) == -1) {
-			fprintf(stderr, "fstat: %s: %s\n", fname2,
-			        strerror(errno));
-			exit(EXIT_FAILURE);
-		}
-		fsize_2 = sb.st_size;
+	printf("Bytes equal: %012llu %.11g\n",
+	        (dr->comp_B - dr->diff_B),
+		1.0*(dr->comp_B - dr->diff_B)/dr->comp_B);
+	printf("Bytes diff:  %012llu %.11g\n",
+	       dr->diff_B,
+	       1.0*dr->diff_B/dr->comp_B);
+	printf("Bits equal:  %012llu %.11g\n",
+	       (8*dr->comp_B - dr->diff_b),
+	       1.0*(8*dr->comp_B - dr->diff_b)/(8*dr->comp_B));
+	printf("Bits diff:   %012llu %.11g\n",
+	      dr->diff_b,
+	      1.0*dr->diff_b/(8*dr->comp_B));
 
-		if ((stream2 = fopen(fname2, "r")) == NULL) {
-			fprintf(stderr, "fopen: %s: %s", fname2,
-			        strerror(errno));
-			exit(EXIT_FAILURE);
-		}
-
-		if (max_len == 0) {
-			max_len = fsize_1 < fsize_2 ? fsize_1 : fsize_2;
-		}
-	} else {
-		if (max_len == 0) {
-			max_len = fsize_1;
-		}
-	}
-
-	if ((buf_1 = malloc(BUFSIZE)) == NULL) {
-		perror("malloc");
-		exit(EXIT_FAILURE);
-	}
-	if ((buf_2 = malloc(BUFSIZE)) == NULL) {
-		perror("malloc");
-		exit(EXIT_FAILURE);
-	}
-
-	//Fill the buffer with the constant value if we're using that.
-	if (constant_mode==1) {
-		memset(buf_2, comp_val, BUFSIZE);
-	}
-
-	// TODO: Take advantage of 64-bit registers to process 8 bytes
-	// at a time when possible
-	for(off_t i=0; i < max_len; i++) {
-		// Fill up the buffer if we're at the beginning.
-		// TODO: threads for keeping the buffer full?
-		if (buf_cnt == 0) {
-			fread(buf_1, BUFSIZE, 1, stream1);
-			if (constant_mode == 0) {
-				fread(buf_2, BUFSIZE, 1, stream2);
-			}
-		}
-
-		// Compare the bytes
-		if (byte_mode) {
-			if(buf_1[buf_cnt] != buf_2[buf_cnt]) {
-				diff_cnt++;
-			}
-		} else if (bit_mode) {
-			byte_xor = buf_1[buf_cnt]^buf_2[buf_cnt];
-			/* 
-			// Slow way of counting bits, but should work
-			// on all architectures
-			while (byte_xor > 0) {
-				if ((byte_xor & 1) == 1) {
-					diff_cnt++;
-				}
-				byte_xor = byte_xor >> 1;
-			}
-			*/
-
-			// Use the SSE4 instruction
-			// Need to compile with -march=broadwell,
-			// or another option supporting SSE4
-			diff_cnt += _mm_popcnt_u32(byte_xor);
-		}
-
-		// Increment buf_cnt; Wrap around if we're at the end.
-		buf_cnt++;
-		if (buf_cnt > BUFSIZE) {
-			buf_cnt = 0;
-		}
-	}
-
-	// Clean up
-	if (stream1 != NULL) {
-		fclose(stream1);
-	}
-	if (stream2 != NULL) {
-		fclose(stream2);
-	}
-
-	free(buf_1);
-	free(buf_2);
-
-	// TODO: Add sanity to the output process
-	if (equal_mode) {
-		if (byte_mode) {
-			if (fraction_mode) {
-				fprintf(stdout,
-				        "%.11g\n",
-				        1.0*(max_len-diff_cnt) /
-				        max_len);
-			} else {
-				fprintf(stdout,
-				        "%llu\n",
-				        max_len-diff_cnt);
-			}
-		} else if (bit_mode) {
-			if (fraction_mode) {
-				fprintf(stdout,
-				        "%.11g\n",
-				        1.0*(max_len*8-diff_cnt) /
-				        (max_len*8));
-			} else {
-				fprintf(stdout,
-				        "%llu\n",
-				        max_len*8-diff_cnt);
-			}
-		} 
-	} else {
-		if (fraction_mode) {
-			if (byte_mode) {
-				fprintf(stdout,
-				        "%.11g\n",
-				        1.0*diff_cnt/max_len);
-			} else if (bit_mode) {
-				fprintf(stdout,
-				        "%.11g\n",
-				        1.0*diff_cnt/(8*max_len));
-			}
-		} else {
-			fprintf(stdout, "%llu\n", diff_cnt);
-		}
-	}
+	free(dc);
+	free(dr);
 
 	return 0;
 }

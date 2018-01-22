@@ -131,7 +131,7 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 			ctr = 0;
 		}
 
-		if ((buf_cnt - ctr) > 8) {
+		if ((buf_cnt - ctr) >= 8) {
 			quad_xor = *(uint64_t *)(buf_1 + ctr) ^
 			           *(uint64_t *)(buf_2 + ctr);
 			for (int i = 0; i < 8; i++) {

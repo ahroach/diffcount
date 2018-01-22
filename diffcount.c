@@ -76,11 +76,21 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 		        dc->fname_1, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
+	if (fseeko(stream_1, dc->skip_1, 0) == -1) {
+		fprintf(stderr, "fseeko %s: %s", dc->fname_1,
+		        strerror(errno));
+		exit(EXIT_FAILURE);
+	}
 
 	if (dc->const_mode == 0) {
 		if ((stream_2 = fopen(dc->fname_2, "r")) == NULL) {
 			fprintf(stderr, "fopen %s: %s",
 			        dc->fname_2, strerror(errno));
+			exit(EXIT_FAILURE);
+		}
+		if (fseeko(stream_2, dc->skip_2, 0) == -1) {
+			fprintf(stderr, "fseeko %s: %s", dc->fname_2,
+			        strerror(errno));
 			exit(EXIT_FAILURE);
 		}
 	}

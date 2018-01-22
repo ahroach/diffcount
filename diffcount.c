@@ -1,23 +1,10 @@
-/**************************************************************
- *                                                            *
- * Count the number of bit differences or byte differences    *
- * between two files. Computes byte differences by default.   *
- *                                                            *
- * Usage: diffcount [-b/-B] filename1 filename2               *
- * -b or --bit: enables bit-differencing mode                 *
- * -B or --byte: enables byte-differencing mode (default)     *
- * -c or --constant: compare to constant hexadecimal byte     *
- *                   value given in place of filename2        *
- * -e or --equal: print the number of bytes or bits that      *
- *                are equal over the compared segment         *
- * -f or --fraction: print the number of bytes or bits as     *
- *                   a fraction over the size of the          *
- *                   compared segment
- *                                                            *
- * To compile: gcc -march=broadwell -O3 -o diffcount /        *
- *             diffcount.c                                    *
- *                                                            *
- **************************************************************/
+/*
+ * Count the number of bit differences and byte differences
+ * between two files.
+ *
+ * To compile: gcc -march=broadwell -O3 -o diffcount diffcount.c
+ * or:         gcc -mpopcnt -O3 -o diffcount diffcount.c
+ */
 
 #define BUFSIZE 512*64
 
@@ -62,8 +49,9 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 	struct diffcount_res *dr;
 
 	uint8_t byte_xor;
-	uint64_t buf_cnt, ctr, buf1_cnt, buf2_cnt;
-	int buf_underfill;
+	uint64_t quad_xor;
+	uint64_t buf_cnt, ctr, buf1_cnt, buf2_cnt, read_size;
+	int final_round;
 
 	/* Better performance using independent local variables. Assign
 	 * to the struct at the end of the function */
@@ -109,54 +97,61 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 		memset(buf_2, dc->const_val, BUFSIZE);
 	}
 
-	/* TODO: Take advantage of 64-bit registers to process 8 bytes
-	   at a time when possible */
 	buf_cnt = 0;
-	buf_underfill = 0;
+	final_round = 0;
 	ctr = 0;
-	while((comp_B < dc->max_len) || (dc->max_len == 0)) {
+	while(1) {
 		/* Fill up the buffer if empty */
-		/* TODO: threads for better performance */
+		/* TODO: threads for better performance? */
 		if (ctr == buf_cnt) {
-			if (buf_underfill == 1) break;
+			if (final_round == 1) break;
 
-			buf1_cnt = fread(buf_1, 1, BUFSIZE, stream_1);
+			if ((dc->max_len != 0) &&
+			    (dc->max_len - comp_B) < BUFSIZE) {
+				read_size = dc->max_len - comp_B;
+				final_round = 1;
+			} else {
+				read_size = BUFSIZE;
+			}
+
+			buf1_cnt = fread(buf_1, 1, read_size, stream_1);
 
 			if (dc->const_mode == 1) {
 				buf_cnt = buf1_cnt;
 			} else {
-				buf2_cnt = fread(buf_2, 1, BUFSIZE, stream_2);
+				buf2_cnt = fread(buf_2, 1, read_size,
+				                 stream_2);
 				buf_cnt = buf1_cnt < buf2_cnt ?
 				            buf1_cnt : buf2_cnt;
 			}
 
-			buf_underfill = buf_cnt < BUFSIZE ? 1 : 0;
+			if (buf_cnt < read_size) {
+				final_round = 1;
+			}
 			ctr = 0;
 		}
 
-		if(buf_1[ctr] != buf_2[ctr]) {
-			diff_B++;
-		}
-
-		byte_xor = buf_1[ctr]^buf_2[ctr];
-		/*
-		// Slow way of counting bits, but should work
-		// on all architectures
-		while (byte_xor > 0) {
-			if ((byte_xor & 1) == 1) {
-				diff_cnt++;
+		if ((buf_cnt - ctr) > 8) {
+			quad_xor = *(uint64_t *)(buf_1 + ctr) ^
+			           *(uint64_t *)(buf_2 + ctr);
+			for (int i = 0; i < 8; i++) {
+				diff_B += (((quad_xor >> (8*i)) & 0xff) != 0);
 			}
-			byte_xor = byte_xor >> 1;
+			diff_b += _mm_popcnt_u64(quad_xor);
+			ctr += 8;
+			comp_B += 8;
+		} else {
+			byte_xor = buf_1[ctr]^buf_2[ctr];
+			diff_B += byte_xor != 0;
+
+			// Use the SSE4 POPCNT instruction
+			// Need to compile with -march=broadwell,
+			// or another option supporting SSE4
+			diff_b += _mm_popcnt_u32(byte_xor);
+
+			ctr++;
+			comp_B++;
 		}
-		*/
-
-		// Use the SSE4 instruction
-		// Need to compile with -march=broadwell,
-		// or another option supporting SSE4
-		diff_b += _mm_popcnt_u32(byte_xor);
-
-		ctr++;
-		comp_B++;
 	}
 
 	fclose(stream_1);
@@ -244,7 +239,8 @@ int main(int argc, char **argv)
 
 	// Get the size of file1
 	if (stat(dc->fname_1, &sb) == -1) {
-		fprintf(stderr, "fstat: %s: %s\n", dc->fname_1, strerror(errno));
+		fprintf(stderr, "fstat: %s: %s\n", dc->fname_1,
+		        strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 	fsize_1 = sb.st_size;

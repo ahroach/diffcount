@@ -238,7 +238,10 @@ int main(int argc, char **argv)
 
 	if (optind < argc) show_help(argv, 0); //Leftover arguments
 
-	// Get the size of file1
+	/* Count differences */
+	dr = diffcount(dc);
+
+	/* Output statistics */
 	if (stat(dc->fname_1, &sb) == -1) {
 		fprintf(stderr, "fstat: %s: %s\n", dc->fname_1,
 		        strerror(errno));
@@ -246,18 +249,43 @@ int main(int argc, char **argv)
 	}
 	fsize_1 = sb.st_size;
 
-	dr = diffcount(dc);
+	if (dc->const_mode == 0) {
+		if (stat(dc->fname_2, &sb) == -1) {
+			fprintf(stderr, "fstat: %s: %s\n", dc->fname_2,
+			        strerror(errno));
+			exit(EXIT_FAILURE);
+		}
+		fsize_2 = sb.st_size;
+	}
 
-	printf("Bytes equal: %012llu %.11g\n",
-	       (dr->comp_B - dr->diff_B),
-	       1.0*(dr->comp_B - dr->diff_B)/dr->comp_B);
-	printf("Bytes diff:  %012llu %.11g\n",
-	       dr->diff_B, 1.0*dr->diff_B/dr->comp_B);
-	printf("Bits equal:  %012llu %.11g\n",
-	       (dr->comp_b - dr->diff_b),
-	       1.0*(dr->comp_b - dr->diff_b)/(dr->comp_b));
-	printf("Bits diff:   %012llu %.11g\n",
-	       dr->diff_b, 1.0*dr->diff_b/(dr->comp_b));
+	printf("File 1: %s\n"
+	       "  Size: %llu (0x%llx) bytes\n"
+	       "  Offset: %llu (0x%llx) bytes\n",
+	       dc->fname_1, fsize_1, fsize_1, dc->skip_1, dc->skip_1);
+	if (dc->const_mode == 0) {
+		printf("File 2: %s\n"
+		       "  Size: %llu (0x%llx) bytes\n"
+		       "  Offset: %llu (0x%llx) bytes\n",
+		       dc->fname_2, fsize_2, fsize_2,
+		       dc->skip_2, dc->skip_2);
+	} else {
+		printf("Compared to constant value 0x%02hhx\n",
+		       dc->const_val);
+	}
+	printf("Compared %llu (0x%llx) bytes, %llu (0x%llx) bits\n\n",
+	       dr->comp_B, dr->comp_B, dr->comp_b, dr->comp_b);
+
+	printf("           Byte count    Byte fraction       "
+	       "Bit count     Bit fraction\n");
+
+	printf("Diff:  %14llu  %14.13f  %14llu  %14.13f\n",
+	       dr->diff_B, 1.0*dr->diff_B/dr->comp_B,
+	       dr->diff_b, 1.0*dr->diff_b/dr->comp_b);
+	printf("Equal: %14llu  %14.13f  %14llu  %14.13f\n",
+		dr->comp_B - dr->diff_B,
+		(1.0*dr->comp_B - dr->diff_B)/dr->comp_B,
+		dr->comp_b - dr->diff_b,
+		(1.0*dr->comp_b - dr->diff_b)/dr->comp_b);
 
 	free(dc);
 	free(dr);

@@ -51,7 +51,6 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 	uint8_t byte_xor;
 	uint64_t quad_xor;
 	uint64_t buf_cnt, ctr, buf1_cnt, buf2_cnt, read_size;
-	int final_round;
 
 	/* Better performance using independent local variables. Assign
 	 * to the struct at the end of the function */
@@ -98,18 +97,14 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 	}
 
 	buf_cnt = 0;
-	final_round = 0;
 	ctr = 0;
 	while(1) {
 		/* Fill up the buffer if empty */
 		/* TODO: threads for better performance? */
 		if (ctr == buf_cnt) {
-			if (final_round == 1) break;
-
 			if ((dc->max_len != 0) &&
 			    (dc->max_len - comp_B) < BUFSIZE) {
 				read_size = dc->max_len - comp_B;
-				final_round = 1;
 			} else {
 				read_size = BUFSIZE;
 			}
@@ -125,9 +120,11 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 				            buf1_cnt : buf2_cnt;
 			}
 
-			if (buf_cnt < read_size) {
-				final_round = 1;
-			}
+			/* Nothing was read in from at least one stream,
+			   either because dc->max-len - comp_B is zero, or
+			   because we encountered an EOF. Either way, we're
+			   done. */
+			if (buf_cnt == 0) break;
 			ctr = 0;
 		}
 

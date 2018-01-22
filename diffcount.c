@@ -34,6 +34,7 @@ struct diffcount_ctl {
 /* Structure for diffcount result */
 struct diffcount_res {
 	uint64_t comp_B;   /* Total number of bytes compared */
+	uint64_t comp_b;   /* Total number of bits compared */
 	uint64_t diff_B;   /* Number of different bytes */
 	uint64_t diff_b;   /* Number of different bits */
 };
@@ -161,6 +162,7 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 		exit(EXIT_FAILURE);
 	}
 	dr->comp_B = comp_B;
+	dr->comp_b = comp_B*8;
 	dr->diff_B = diff_B;
 	dr->diff_b = diff_b;
 
@@ -245,17 +247,15 @@ int main(int argc, char **argv)
 	dr = diffcount(dc);
 
 	printf("Bytes equal: %012llu %.11g\n",
-	        (dr->comp_B - dr->diff_B),
-		1.0*(dr->comp_B - dr->diff_B)/dr->comp_B);
+	       (dr->comp_B - dr->diff_B),
+	       1.0*(dr->comp_B - dr->diff_B)/dr->comp_B);
 	printf("Bytes diff:  %012llu %.11g\n",
-	       dr->diff_B,
-	       1.0*dr->diff_B/dr->comp_B);
+	       dr->diff_B, 1.0*dr->diff_B/dr->comp_B);
 	printf("Bits equal:  %012llu %.11g\n",
-	       (8*dr->comp_B - dr->diff_b),
-	       1.0*(8*dr->comp_B - dr->diff_b)/(8*dr->comp_B));
+	       (dr->comp_b - dr->diff_b),
+	       1.0*(dr->comp_b - dr->diff_b)/(dr->comp_b));
 	printf("Bits diff:   %012llu %.11g\n",
-	      dr->diff_b,
-	      1.0*dr->diff_b/(8*dr->comp_B));
+	       dr->diff_b, 1.0*dr->diff_b/(dr->comp_b));
 
 	free(dc);
 	free(dr);

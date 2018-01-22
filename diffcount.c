@@ -21,131 +21,126 @@
 
 #define BUFSIZE 512*64
 
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <smmintrin.h>
 
-static void arg_error(char **argv)
+static void show_help(char **argv, int verbose)
 {
-	fprintf(stderr,
-		"usage: %s [-b/-B/-c/-f/-e] file1 [file1/byte_val]\n",
-		argv[0]);
+	printf("Usage: %s [-ch] [-n len] file file/constant [skip1] [skip2]\n",
+	       argv[0]);
+	if (verbose) {
+		printf(" -c           compare to constant byte value\n"
+		       " -h           print help\n"
+		       " -n max_len   maximum number of bytes to compare\n");
+	}
 	exit(EXIT_FAILURE);
 }
 
+
 int main(int argc, char **argv) 
 {
+	int opt;
 	int bit_mode = 0;
 	int byte_mode = 1;
 	int constant_mode = 0;
 	int equal_mode = 0;
 	int fraction_mode = 0;
-	int verbose = 0;
 
-	char *fname_1;
-	char *fname_2;
+	char *fname1;
+	char *fname2;
 
 	FILE *stream1 = NULL;
 	FILE *stream2 = NULL;
 
 	struct stat sb;
 
-	off_t fsize_1;
-	off_t fsize_2;
+	uint64_t fsize_1;
+	uint64_t fsize_2;
 
-	off_t cmp_size = 0;
-	off_t diff_cnt = 0;
+	uint64_t max_len = 0;
 
-	off_t buf_cnt = 0;
+	uint64_t diff_cnt = 0;
+
+	uint64_t skip1, skip2;
+
+	uint64_t buf_cnt = 0;
 
 	unsigned char *buf_1;
 	unsigned char *buf_2;
 
-	unsigned char byte_xor, constant_value = 0;
+	unsigned char byte_xor, comp_val = 0;
 
-
-	// Parse the command line arguments
-	if (argc < 3) {
-		arg_error(argv);
-	}
-
-	// TODO: Move to using getopt_long for argument passing
-	for (int i = 1; i <= argc-3; i++) {
-		if((strcmp(argv[i], "-b") == 0) || 
-		   (strcmp(argv[i], "--bit") == 0)) {
-			bit_mode = 1;
-			byte_mode = 0;
-		} else if((strcmp(argv[i], "-B") == 0) ||
-		          (strcmp(argv[i], "--byte") == 0)) {
-			bit_mode = 0;
-			byte_mode=1;
-		} else if((strcmp(argv[i], "-c") == 0) ||
-		          (strcmp(argv[i], "--constant") == 0)) {
-			constant_mode=1;
-		} else if((strcmp(argv[i], "-e") == 0) ||
-		          (strcmp(argv[i], "--equal") == 0)) {
-			equal_mode=1;
-		} else if((strcmp(argv[i], "-f") == 0) ||
-		          (strcmp(argv[i], "--fraction") == 0)) {
-			fraction_mode=1;
-		} else {
-			fprintf(stderr,
-			        "Unsupported option %s in call to %s\n",
-			        argv[i], argv[0]);
-			return 1;
+	while ((opt = getopt(argc, argv, "cn:h")) != -1) {
+		switch (opt) {
+		case 'n':
+			max_len = strtoull(optarg, NULL, 0);
+			break;
+		case 'c':
+			constant_mode = 1;
+			break;
+		case 'h':
+			show_help(argv, 1);
+			break;
+		default:
+			show_help(argv, 0);
 		}
 	}
 
-	fname_1 = argv[argc-2];
+	// Get remaining arguments
+	if ((argc - optind) < 2) show_help(argv, 0);
+	fname1 = argv[optind++];
+
+	if (constant_mode)
+		comp_val = strtoul(argv[optind++], NULL, 0);
+	else
+		fname2 = argv[optind++];
+
+	skip1 = (optind < argc) ? strtoull(argv[optind++], NULL, 0) : 0;
+	skip2 = (optind < argc) ? strtoull(argv[optind++], NULL, 0) : 0;
+
+	if (optind < argc) show_help(argv, 0); //Leftover arguments
 
 	// Get the size of file1
-	if (stat(fname_1, &sb) == -1) {
-		fprintf(stderr, "fstat: %s: %s\n", fname_1, strerror(errno));
+	if (stat(fname1, &sb) == -1) {
+		fprintf(stderr, "fstat: %s: %s\n", fname1, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 	fsize_1 = sb.st_size;
 
 	// Open file1
-	if ((stream1 = fopen(fname_1, "r")) == NULL) {
-		fprintf(stderr, "fopen: %s: %s\n", fname_1, strerror(errno));
+	if ((stream1 = fopen(fname1, "r")) == NULL) {
+		fprintf(stderr, "fopen: %s: %s\n", fname1, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
-	// If constant mode, get the value of the byte
-	if (constant_mode == 1) {
-		constant_value = (unsigned char)strtoul(argv[argc-1], NULL, 0);
-		cmp_size = (cmp_size == 0) ? fsize_1 : cmp_size;
-	} else {
-		//Otherwise, open file2 and get its size
-		fname_2 = argv[argc-1];
-
-		if (stat(fname_2, &sb) == -1) {
-			fprintf(stderr, "fstat: %s: %s\n", fname_2,
+	if (constant_mode == 0) {
+		//Open file2 and get its size
+		if (stat(fname2, &sb) == -1) {
+			fprintf(stderr, "fstat: %s: %s\n", fname2,
 			        strerror(errno));
 			exit(EXIT_FAILURE);
 		}
 		fsize_2 = sb.st_size;
 
-		if ((stream2 = fopen(fname_2, "r")) == NULL) {
-			fprintf(stderr, "fopen: %s: %s", fname_2,
+		if ((stream2 = fopen(fname2, "r")) == NULL) {
+			fprintf(stderr, "fopen: %s: %s", fname2,
 			        strerror(errno));
 			exit(EXIT_FAILURE);
 		}
 
-		if (cmp_size == 0) {
-			cmp_size = fsize_1 < fsize_2 ? fsize_1 : fsize_2;
-			if ((fsize_1 != fsize_2) && verbose) {
-				fprintf(stderr,
-				        "File sizes differ.\n"
-				        "File 1: %llu bytes\n"
-				        "File 2: %llu bytes\n"
-				        "Comparing only %llu bytes\n",
-				        fsize_1, fsize_2, cmp_size);
-			}
+		if (max_len == 0) {
+			max_len = fsize_1 < fsize_2 ? fsize_1 : fsize_2;
+		}
+	} else {
+		if (max_len == 0) {
+			max_len = fsize_1;
 		}
 	}
 
@@ -160,12 +155,12 @@ int main(int argc, char **argv)
 
 	//Fill the buffer with the constant value if we're using that.
 	if (constant_mode==1) {
-		memset(buf_2, constant_value, BUFSIZE);
+		memset(buf_2, comp_val, BUFSIZE);
 	}
 
 	// TODO: Take advantage of 64-bit registers to process 8 bytes
 	// at a time when possible
-	for(off_t i=0; i < cmp_size; i++) {
+	for(off_t i=0; i < max_len; i++) {
 		// Fill up the buffer if we're at the beginning.
 		// TODO: threads for keeping the buffer full?
 		if (buf_cnt == 0) {
@@ -223,23 +218,23 @@ int main(int argc, char **argv)
 			if (fraction_mode) {
 				fprintf(stdout,
 				        "%.11g\n",
-				        1.0*(cmp_size-diff_cnt) /
-				        cmp_size);
+				        1.0*(max_len-diff_cnt) /
+				        max_len);
 			} else {
 				fprintf(stdout,
 				        "%llu\n",
-				        cmp_size-diff_cnt);
+				        max_len-diff_cnt);
 			}
 		} else if (bit_mode) {
 			if (fraction_mode) {
 				fprintf(stdout,
 				        "%.11g\n",
-				        1.0*(cmp_size*8-diff_cnt) /
-				        (cmp_size*8));
+				        1.0*(max_len*8-diff_cnt) /
+				        (max_len*8));
 			} else {
 				fprintf(stdout,
 				        "%llu\n",
-				        cmp_size*8-diff_cnt);
+				        max_len*8-diff_cnt);
 			}
 		} 
 	} else {
@@ -247,11 +242,11 @@ int main(int argc, char **argv)
 			if (byte_mode) {
 				fprintf(stdout,
 				        "%.11g\n",
-				        1.0*diff_cnt/cmp_size);
+				        1.0*diff_cnt/max_len);
 			} else if (bit_mode) {
 				fprintf(stdout,
 				        "%.11g\n",
-				        1.0*diff_cnt/(8*cmp_size));
+				        1.0*diff_cnt/(8*max_len));
 			}
 		} else {
 			fprintf(stdout, "%llu\n", diff_cnt);

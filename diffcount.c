@@ -6,7 +6,9 @@
  * or:         gcc -mpopcnt -O3 -o diffcount diffcount.c
  */
 
+#ifndef BUFSIZE
 #define BUFSIZE 512*64
+#endif
 
 #include <unistd.h>
 #include <stdio.h>

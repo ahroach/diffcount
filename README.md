@@ -1,7 +1,7 @@
-Diffcount: A bit and byte difference counter
-============================================
+Diffcount: Count bit and byte differences between files
+=======================================================
 
-Diffcount is an application for counting the byte and bit differences between
+Diffcount is an application for counting the bit and byte differences between
 two files, or between one file and a constant value.
 
 Features

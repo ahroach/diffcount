@@ -169,7 +169,7 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 		exit(EXIT_FAILURE);
 	}
 	dr->comp_B = comp_B;
-	dr->comp_b = comp_B*8;
+	dr->comp_b = 8*comp_B;
 	dr->diff_B = diff_B;
 	dr->diff_b = diff_b;
 
@@ -181,9 +181,9 @@ static void show_help(char **argv, int verbose)
 	printf("Usage: %s [-ch] [-n len] file1 file2/const [seek1 [seek2]]\n",
 	       argv[0]);
 	if (verbose) {
-		printf(" -c           compare file to constant byte value\n"
-		       " -h           print help\n"
-		       " -n max_len   maximum number of bytes to compare\n");
+		printf(" -c       compare file to constant byte value\n"
+		       " -h       print help\n"
+		       " -n len   maximum number of bytes to compare\n");
 	}
 	exit(EXIT_FAILURE);
 }

@@ -20,20 +20,20 @@
 #include <sys/stat.h>
 #include <smmintrin.h>
 
-/* Structure for diffcount control */
+/* Diffcount control */
 struct diffcount_ctl {
 	char *fname_1;
 	char *fname_2;
-	uint64_t skip_1;   /* Seek value for file 1 */
-	uint64_t skip_2;   /* Seek value for file 2 */
+	uint64_t seek_1;   /* Seek value for file 1 */
+	uint64_t seek_2;   /* Seek value for file 2 */
 	uint64_t max_len;  /* Maximum number of bytes to compare.
 	                      Go to first EOF if zero. */
-	int const_mode;    /* 0: Compare files.
+	int const_mode;    /* 0: Compare two files.
                               1: Compare file to constant byte */
 	uint8_t const_val; /* Constant byte value */
 };
 
-/* Structure for diffcount result */
+/* Diffcount result */
 struct diffcount_res {
 	uint64_t comp_B;   /* Total number of bytes compared */
 	uint64_t comp_b;   /* Total number of bits compared */
@@ -43,30 +43,29 @@ struct diffcount_res {
 
 static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 {
-	unsigned char *buf_1;
-	unsigned char *buf_2;
-
 	FILE *stream_1 = NULL;
 	FILE *stream_2 = NULL;
 
-	struct diffcount_res *dr;
+	unsigned char *buf_1;
+	unsigned char *buf_2;
 
 	uint8_t byte_xor;
 	uint64_t quad_xor;
-	uint64_t buf_cnt, ctr, buf1_cnt, buf2_cnt, read_size;
+	uint64_t buf_cnt, buf1_cnt, buf2_cnt, read_size, ctr;
 
-	/* Better performance using independent local variables. Assign
-	 * to the struct at the end of the function */
+	/* Better performance using independent local variables. Assigned
+	   to the struct before returning */
 	uint64_t comp_B = 0;
 	uint64_t diff_B = 0;
 	uint64_t diff_b = 0;
+	struct diffcount_res *dr;
 
 	if ((stream_1 = fopen(dc->fname_1, "r")) == NULL) {
 		fprintf(stderr, "fopen %s: %s\n",
 		        dc->fname_1, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
-	if (fseeko(stream_1, dc->skip_1, 0) == -1) {
+	if (fseeko(stream_1, dc->seek_1, 0) == -1) {
 		fprintf(stderr, "fseeko %s: %s", dc->fname_1,
 		        strerror(errno));
 		exit(EXIT_FAILURE);
@@ -78,7 +77,7 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 			        dc->fname_2, strerror(errno));
 			exit(EXIT_FAILURE);
 		}
-		if (fseeko(stream_2, dc->skip_2, 0) == -1) {
+		if (fseeko(stream_2, dc->seek_2, 0) == -1) {
 			fprintf(stderr, "fseeko %s: %s", dc->fname_2,
 			        strerror(errno));
 			exit(EXIT_FAILURE);
@@ -143,12 +142,7 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 		} else {
 			byte_xor = buf_1[ctr]^buf_2[ctr];
 			diff_B += byte_xor != 0;
-
-			// Use the SSE4 POPCNT instruction
-			// Need to compile with -march=broadwell,
-			// or another option supporting SSE4
 			diff_b += _mm_popcnt_u32(byte_xor);
-
 			ctr++;
 			comp_B++;
 		}
@@ -173,7 +167,7 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 
 static void show_help(char **argv, int verbose)
 {
-	printf("Usage: %s [-ch] [-n len] file file/constant [skip1] [skip2]\n",
+	printf("Usage: %s [-ch] [-n len] file file/const [seek1] [seek2]\n",
 	       argv[0]);
 	if (verbose) {
 		printf(" -c           compare to constant byte value\n"
@@ -188,37 +182,36 @@ int main(int argc, char **argv)
 {
 	int opt;
 
-	struct stat sb;
-	uint64_t fsize_1, fsize_2;
-
 	struct diffcount_ctl *dc;
 	struct diffcount_res *dr;
 
+	struct stat sb;
+	uint64_t fsize_1, fsize_2;
 
-	/* Allocate the diffcnt_ctl structure and set defaults */
+	/* Allocate diffcount_ctl structure and set defaults */
 	if ((dc = malloc(sizeof(struct diffcount_ctl))) == NULL) {
 		perror("malloc dc");
 		exit(EXIT_FAILURE);
 	}
 	dc->fname_1 = NULL;
 	dc->fname_2 = NULL;
-	dc->skip_1 = 0;
-	dc->skip_2 = 0;
+	dc->seek_1 = 0;
+	dc->seek_2 = 0;
 	dc->max_len = 0;
 	dc->const_mode = 0;
 	dc->const_val = 0;
 
 	/* Get command line arguments */
-	while ((opt = getopt(argc, argv, "cn:h")) != -1) {
+	while ((opt = getopt(argc, argv, "chn:")) != -1) {
 		switch (opt) {
-		case 'n':
-			dc->max_len = strtoull(optarg, NULL, 0);
-			break;
 		case 'c':
 			dc->const_mode = 1;
 			break;
 		case 'h':
 			show_help(argv, 1);
+			break;
+		case 'n':
+			dc->max_len = strtoull(optarg, NULL, 0);
 			break;
 		default:
 			show_help(argv, 0);
@@ -233,8 +226,8 @@ int main(int argc, char **argv)
 	else
 		dc->fname_2 = argv[optind++];
 
-	dc->skip_1 = (optind < argc) ? strtoull(argv[optind++], NULL, 0) : 0;
-	dc->skip_2 = (optind < argc) ? strtoull(argv[optind++], NULL, 0) : 0;
+	dc->seek_1 = (optind < argc) ? strtoull(argv[optind++], NULL, 0) : 0;
+	dc->seek_2 = (optind < argc) ? strtoull(argv[optind++], NULL, 0) : 0;
 
 	if (optind < argc) show_help(argv, 0); //Leftover arguments
 
@@ -261,13 +254,13 @@ int main(int argc, char **argv)
 	printf("File 1: %s\n"
 	       "  Size: %llu (0x%llx) bytes\n"
 	       "  Offset: %llu (0x%llx) bytes\n",
-	       dc->fname_1, fsize_1, fsize_1, dc->skip_1, dc->skip_1);
+	       dc->fname_1, fsize_1, fsize_1, dc->seek_1, dc->seek_1);
 	if (dc->const_mode == 0) {
 		printf("File 2: %s\n"
 		       "  Size: %llu (0x%llx) bytes\n"
 		       "  Offset: %llu (0x%llx) bytes\n",
 		       dc->fname_2, fsize_2, fsize_2,
-		       dc->skip_2, dc->skip_2);
+		       dc->seek_2, dc->seek_2);
 	} else {
 		printf("Compared to constant value 0x%02hhx\n",
 		       dc->const_val);
@@ -275,13 +268,13 @@ int main(int argc, char **argv)
 	printf("Compared %llu (0x%llx) bytes, %llu (0x%llx) bits\n\n",
 	       dr->comp_B, dr->comp_B, dr->comp_b, dr->comp_b);
 
-	printf("           Byte count    Byte fraction       "
+	printf("            Byte count    Byte fraction       "
 	       "Bit count     Bit fraction\n");
 
-	printf("Diff:  %14llu  %14.13f  %14llu  %14.13f\n",
+	printf("Differ: %14llu  %14.13f  %14llu  %14.13f\n",
 	       dr->diff_B, 1.0*dr->diff_B/dr->comp_B,
 	       dr->diff_b, 1.0*dr->diff_b/dr->comp_b);
-	printf("Equal: %14llu  %14.13f  %14llu  %14.13f\n",
+	printf("Equal:  %14llu  %14.13f  %14llu  %14.13f\n",
 		dr->comp_B - dr->diff_B,
 		(1.0*dr->comp_B - dr->diff_B)/dr->comp_B,
 		dr->comp_b - dr->diff_b,

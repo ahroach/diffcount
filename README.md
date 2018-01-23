@@ -8,7 +8,7 @@ Features
 --------
 * Arbitrary offsets can be set for each input file.
 * A maximum compare length can be specified to limit the amount of compared data.
-* Designed to be reasonably fast with large files
+* Designed to be reasonably fast with large files.
 
 Installation
 ------------
@@ -26,8 +26,8 @@ or, more generically, with `-mpopcnt`:
 Compiling with optimizations is highly encourage, as this leads to significant
 performance improvements.
 
-Usage:
-------
+Usage
+-----
 The user runs:
 
 	diffcount [-ch] [-n len] file1 file2/const [seek1 [seek2]]
@@ -39,7 +39,6 @@ with the command line arguments:
 * `seek1`: offset for `file1`
 * `seek2`: offset for `file2`
 
-Note that in constant mode, a constant byte value should be specified in
-place of the second filename. In constant mode, specifying `seek2` has no
-effect.
+In constant mode, a constant byte value should be specified in place of
+`file2`. In constant mode, specifying `seek2` has no effect.
 

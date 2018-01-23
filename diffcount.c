@@ -286,10 +286,10 @@ int main(int argc, char **argv)
 	       dr->diff_B, 1.0*dr->diff_B/dr->comp_B,
 	       dr->diff_b, 1.0*dr->diff_b/dr->comp_b);
 	printf("Equal:  %14llu  %14.13f  %14llu  %14.13f\n",
-		dr->comp_B - dr->diff_B,
-		(1.0*dr->comp_B - dr->diff_B)/dr->comp_B,
-		dr->comp_b - dr->diff_b,
-		(1.0*dr->comp_b - dr->diff_b)/dr->comp_b);
+	       dr->comp_B - dr->diff_B,
+	       (1.0*dr->comp_B - dr->diff_B)/dr->comp_B,
+	       dr->comp_b - dr->diff_b,
+	       (1.0*dr->comp_b - dr->diff_b)/dr->comp_b);
 
 	free(dc);
 	free(dr);

@@ -23,8 +23,8 @@ or, more generically, with `-mpopcnt`:
 
 	gcc -mpopcnt -O3 -o diffcount diffcount.c
 
-Compiling with optimizations is highly encourage, as this leads to significant
-performance improvements.
+Compiling with optimizations is highly encouraged, as they provide
+significant performance improvements.
 
 Usage
 -----

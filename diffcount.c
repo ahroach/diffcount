@@ -167,10 +167,10 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 
 static void show_help(char **argv, int verbose)
 {
-	printf("Usage: %s [-ch] [-n len] file file/const [seek1] [seek2]\n",
+	printf("Usage: %s [-ch] [-n len] file1 file2/const [seek1 [seek2]]\n",
 	       argv[0]);
 	if (verbose) {
-		printf(" -c           compare to constant byte value\n"
+		printf(" -c           compare file to constant byte value\n"
 		       " -h           print help\n"
 		       " -n max_len   maximum number of bytes to compare\n");
 	}

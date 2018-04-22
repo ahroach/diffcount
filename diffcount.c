@@ -52,57 +52,118 @@ struct diffcount_res {
 	uint64_t diff_b;   /* Number of different bits */
 };
 
-static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
+static void *malloc_or_die(size_t size)
 {
-	FILE *stream_1 = NULL;
-	FILE *stream_2 = NULL;
+	void *buf;
 
-	unsigned char *buf_1;
-	unsigned char *buf_2;
-
-	uint8_t byte_xor;
-	uint64_t quad_xor;
-	uint64_t buf_cnt, buf1_cnt, buf2_cnt, read_size, ctr;
-
-	/* Better performance using independent local variables. Assigned
-	   to the struct before returning */
-	uint64_t comp_B = 0;
-	uint64_t diff_B = 0;
-	uint64_t diff_b = 0;
-	struct diffcount_res *dr;
-
-	if ((stream_1 = fopen(dc->fname_1, "r")) == NULL) {
-		fprintf(stderr, "fopen %s: %s\n",
-		        dc->fname_1, strerror(errno));
+	buf = malloc(size);
+	if (buf == NULL) {
+		perror("malloc");
 		exit(EXIT_FAILURE);
 	}
-	if (fseeko(stream_1, dc->seek_1, 0) == -1) {
-		fprintf(stderr, "fseeko %s: %s", dc->fname_1,
+	return buf;
+}
+
+static struct diffcount_ctl *diffcount_ctl_init(void)
+{
+	struct diffcount_ctl *dc;
+
+	dc = malloc_or_die(sizeof(struct diffcount_ctl));
+	dc->fname_1 = NULL;
+	dc->fname_2 = NULL;
+	dc->seek_1 = 0;
+	dc->seek_2 = 0;
+	dc->max_len = 0;
+	dc->const_mode = 0;
+	dc->const_val = 0;
+
+	return dc;
+}
+
+static FILE *fopen_and_seek(const char *filename, uint64_t seek)
+{
+	FILE *stream;
+
+	if ((stream = fopen(filename, "r")) == NULL) {
+		fprintf(stderr, "fopen %s: %s\n",
+		        filename, strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	if (fseeko(stream, seek, 0) == -1) {
+		fprintf(stderr, "fseeko %s: %s", filename,
 		        strerror(errno));
 		exit(EXIT_FAILURE);
 	}
+	return stream;
+}
 
+static off_t get_filesize(const char *filename)
+{
+	struct stat sb;
+
+	if (stat(filename, &sb) == -1) {
+		fprintf(stderr, "fstat: %s: %s\n", filename,
+		        strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	return sb.st_size;
+}
+
+/* Fill buffers. Returns the number of bytes that are ready to be compared
+   in the two buffers. */
+static uint64_t fill_buffers(struct diffcount_ctl *dc, FILE *stream_1,
+                             FILE *stream_2, uint8_t *buf_1, uint8_t *buf_2,
+                             uint64_t bytes_compared)
+{
+	uint64_t buf_cnt, buf1_cnt, buf2_cnt, read_size;
+
+	if ((dc->max_len != 0) &&
+	    (dc->max_len - bytes_compared) < BUFSIZE) {
+		/* Read size limited by user-specified max_len */
+		read_size = dc->max_len - bytes_compared;
+	} else {
+		/* Try to read the full BUFSIZE */
+		read_size = BUFSIZE;
+	}
+
+	buf1_cnt = fread(buf_1, 1, read_size, stream_1);
+
+	if (dc->const_mode == 1) {
+		/* In const mode, buffer count is whatever we managed to read
+		   from the first stream */
+		buf_cnt = buf1_cnt;
+	} else {
+		buf2_cnt = fread(buf_2, 1, read_size,
+				 stream_2);
+		/* Return the lesser of the number of bytes that we
+		   successfuly read from each of the two streams. */
+		buf_cnt = buf1_cnt < buf2_cnt ?
+			    buf1_cnt : buf2_cnt;
+	}
+
+	return buf_cnt;
+}
+
+static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
+{
+	FILE *stream_1 = NULL, *stream_2 = NULL;
+	uint8_t *buf_1, *buf_2;
+
+	uint8_t byte_xor;
+	uint64_t ctr, buf_cnt, quad_xor;
+
+	/* Better performance using independent local variables. Assigned
+	   to the struct before returning */
+	uint64_t comp_B = 0, diff_B = 0, diff_b = 0;
+	struct diffcount_res *dr;
+
+	stream_1 = fopen_and_seek(dc->fname_1, dc->seek_1);
 	if (dc->const_mode == 0) {
-		if ((stream_2 = fopen(dc->fname_2, "r")) == NULL) {
-			fprintf(stderr, "fopen %s: %s",
-			        dc->fname_2, strerror(errno));
-			exit(EXIT_FAILURE);
-		}
-		if (fseeko(stream_2, dc->seek_2, 0) == -1) {
-			fprintf(stderr, "fseeko %s: %s", dc->fname_2,
-			        strerror(errno));
-			exit(EXIT_FAILURE);
-		}
+		stream_2 = fopen_and_seek(dc->fname_2, dc->seek_2);
 	}
 
-	if ((buf_1 = malloc(BUFSIZE)) == NULL) {
-		perror("malloc buf_1");
-		exit(EXIT_FAILURE);
-	}
-	if ((buf_2 = malloc(BUFSIZE)) == NULL) {
-		perror("malloc buf_2");
-		exit(EXIT_FAILURE);
-	}
+	buf_1 = malloc_or_die(BUFSIZE);
+	buf_2 = malloc_or_die(BUFSIZE);
 
 	/* Fill buffer 2 with the constant value in constant mode */
 	if (dc->const_mode == 1) {
@@ -112,36 +173,22 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 	buf_cnt = 0;
 	ctr = 0;
 	while(1) {
-		/* Fill up the buffer if empty */
-		/* TODO: threads for better performance? */
+		/* Fill up the buffer if we're at the end */
 		if (ctr == buf_cnt) {
-			if ((dc->max_len != 0) &&
-			    (dc->max_len - comp_B) < BUFSIZE) {
-				read_size = dc->max_len - comp_B;
-			} else {
-				read_size = BUFSIZE;
-			}
+			/* TODO: Threads for better performance? */
+			buf_cnt = fill_buffers(dc, stream_1, stream_2, buf_1,
+			                       buf_2, comp_B);
 
-			buf1_cnt = fread(buf_1, 1, read_size, stream_1);
-
-			if (dc->const_mode == 1) {
-				buf_cnt = buf1_cnt;
-			} else {
-				buf2_cnt = fread(buf_2, 1, read_size,
-				                 stream_2);
-				buf_cnt = buf1_cnt < buf2_cnt ?
-				            buf1_cnt : buf2_cnt;
-			}
-
-			/* Nothing was read in from at least one stream,
-			   either because dc->max-len - comp_B is zero, or
-			   because we encountered an EOF. Either way, we're
-			   done. */
+			/* If buf_cnt is zero, we have no new data to compare,
+			   either because we already read up to max_len, or
+			   because we encountered EOF in either or both of
+			   the streams. Either way, we're done.*/
 			if (buf_cnt == 0) break;
 			ctr = 0;
 		}
 
 		if ((buf_cnt - ctr) >= 8) {
+			/* Process 8 bytes at a time */
 			quad_xor = *(uint64_t *)(buf_1 + ctr) ^
 			           *(uint64_t *)(buf_2 + ctr);
 			for (int i = 0; i < 8; i++) {
@@ -151,6 +198,7 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 			ctr += 8;
 			comp_B += 8;
 		} else {
+			/* Clean up any remaining bytes */
 			byte_xor = buf_1[ctr]^buf_2[ctr];
 			diff_B += byte_xor != 0;
 			diff_b += _mm_popcnt_u32(byte_xor);
@@ -164,16 +212,53 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 	free(buf_1);
 	free(buf_2);
 
-	if ((dr = malloc(sizeof(struct diffcount_res))) == NULL) {
-		perror("malloc dr");
-		exit(EXIT_FAILURE);
-	}
+	dr = malloc_or_die(sizeof(struct diffcount_res));
 	dr->comp_B = comp_B;
 	dr->comp_b = 8*comp_B;
 	dr->diff_B = diff_B;
 	dr->diff_b = diff_b;
 
 	return dr;
+}
+
+static void print_results(struct diffcount_ctl *dc, struct diffcount_res *dr)
+{
+	uint64_t fsize_1, fsize_2;
+
+	fsize_1 = get_filesize(dc->fname_1);
+
+	if (dc->const_mode == 0) {
+		fsize_2 = get_filesize(dc->fname_2);
+	}
+
+	printf("File 1: %s\n"
+	       "  Size: %llu (0x%llx) bytes\n"
+	       "  Offset: %llu (0x%llx) bytes\n",
+	       dc->fname_1, fsize_1, fsize_1, dc->seek_1, dc->seek_1);
+	if (dc->const_mode == 0) {
+		printf("File 2: %s\n"
+		       "  Size: %llu (0x%llx) bytes\n"
+		       "  Offset: %llu (0x%llx) bytes\n",
+		       dc->fname_2, fsize_2, fsize_2,
+		       dc->seek_2, dc->seek_2);
+	} else {
+		printf("Compared to constant value 0x%02hhx\n",
+		       dc->const_val);
+	}
+	printf("Compared %llu (0x%llx) bytes, %llu (0x%llx) bits\n\n",
+	       dr->comp_B, dr->comp_B, dr->comp_b, dr->comp_b);
+
+	printf("            Byte count    Byte fraction       "
+	       "Bit count     Bit fraction\n");
+
+	printf("Differ: %14llu  %14.13f  %14llu  %14.13f\n",
+	       dr->diff_B, 1.0*dr->diff_B/dr->comp_B,
+	       dr->diff_b, 1.0*dr->diff_b/dr->comp_b);
+	printf("Equal:  %14llu  %14.13f  %14llu  %14.13f\n",
+	       dr->comp_B - dr->diff_B,
+	       (1.0*dr->comp_B - dr->diff_B)/dr->comp_B,
+	       dr->comp_b - dr->diff_b,
+	       (1.0*dr->comp_b - dr->diff_b)/dr->comp_b);
 }
 
 static void show_help(char **argv, int verbose)
@@ -196,21 +281,7 @@ int main(int argc, char **argv)
 	struct diffcount_ctl *dc;
 	struct diffcount_res *dr;
 
-	struct stat sb;
-	uint64_t fsize_1, fsize_2;
-
-	/* Allocate diffcount_ctl structure and set defaults */
-	if ((dc = malloc(sizeof(struct diffcount_ctl))) == NULL) {
-		perror("malloc dc");
-		exit(EXIT_FAILURE);
-	}
-	dc->fname_1 = NULL;
-	dc->fname_2 = NULL;
-	dc->seek_1 = 0;
-	dc->seek_2 = 0;
-	dc->max_len = 0;
-	dc->const_mode = 0;
-	dc->const_val = 0;
+	dc = diffcount_ctl_init();
 
 	/* Get command line arguments */
 	while ((opt = getopt(argc, argv, "chn:")) != -1) {
@@ -242,57 +313,13 @@ int main(int argc, char **argv)
 
 	if (optind < argc) show_help(argv, 0); //Leftover arguments
 
-	/* Count differences */
+	/* Perform calculations and print results */
 	dr = diffcount(dc);
-
-	/* Output statistics */
-	if (stat(dc->fname_1, &sb) == -1) {
-		fprintf(stderr, "fstat: %s: %s\n", dc->fname_1,
-		        strerror(errno));
-		exit(EXIT_FAILURE);
-	}
-	fsize_1 = sb.st_size;
-
-	if (dc->const_mode == 0) {
-		if (stat(dc->fname_2, &sb) == -1) {
-			fprintf(stderr, "fstat: %s: %s\n", dc->fname_2,
-			        strerror(errno));
-			exit(EXIT_FAILURE);
-		}
-		fsize_2 = sb.st_size;
-	}
-
-	printf("File 1: %s\n"
-	       "  Size: %llu (0x%llx) bytes\n"
-	       "  Offset: %llu (0x%llx) bytes\n",
-	       dc->fname_1, fsize_1, fsize_1, dc->seek_1, dc->seek_1);
-	if (dc->const_mode == 0) {
-		printf("File 2: %s\n"
-		       "  Size: %llu (0x%llx) bytes\n"
-		       "  Offset: %llu (0x%llx) bytes\n",
-		       dc->fname_2, fsize_2, fsize_2,
-		       dc->seek_2, dc->seek_2);
-	} else {
-		printf("Compared to constant value 0x%02hhx\n",
-		       dc->const_val);
-	}
-	printf("Compared %llu (0x%llx) bytes, %llu (0x%llx) bits\n\n",
-	       dr->comp_B, dr->comp_B, dr->comp_b, dr->comp_b);
-
-	printf("            Byte count    Byte fraction       "
-	       "Bit count     Bit fraction\n");
-
-	printf("Differ: %14llu  %14.13f  %14llu  %14.13f\n",
-	       dr->diff_B, 1.0*dr->diff_B/dr->comp_B,
-	       dr->diff_b, 1.0*dr->diff_b/dr->comp_b);
-	printf("Equal:  %14llu  %14.13f  %14llu  %14.13f\n",
-	       dr->comp_B - dr->diff_B,
-	       (1.0*dr->comp_B - dr->diff_B)/dr->comp_B,
-	       dr->comp_b - dr->diff_b,
-	       (1.0*dr->comp_b - dr->diff_b)/dr->comp_b);
+	print_results(dc, dr);
 
 	free(dc);
 	free(dr);
 
 	return 0;
 }
+

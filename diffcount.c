@@ -35,9 +35,9 @@
 struct diffcount_ctl {
 	char *fname_1;
 	char *fname_2;
-	uint64_t seek_1;   /* Seek value for file 1 */
-	uint64_t seek_2;   /* Seek value for file 2 */
-	uint64_t max_len;  /* Maximum number of bytes to compare.
+	unsigned long long seek_1;   /* Seek value for file 1 */
+	unsigned long long seek_2;   /* Seek value for file 2 */
+	unsigned long long max_len;  /* Maximum number of bytes to compare.
 	                      Go to first EOF if zero. */
 	int const_mode;    /* 0: Compare two files.
                               1: Compare file to constant byte */
@@ -46,10 +46,10 @@ struct diffcount_ctl {
 
 /* Diffcount result */
 struct diffcount_res {
-	uint64_t comp_B;   /* Total number of bytes compared */
-	uint64_t comp_b;   /* Total number of bits compared */
-	uint64_t diff_B;   /* Number of different bytes */
-	uint64_t diff_b;   /* Number of different bits */
+	unsigned long long comp_B;   /* Total number of bytes compared */
+	unsigned long long comp_b;   /* Total number of bits compared */
+	unsigned long long diff_B;   /* Number of different bytes */
+	unsigned long long diff_b;   /* Number of different bits */
 };
 
 static void *malloc_or_die(size_t size)
@@ -80,7 +80,7 @@ static struct diffcount_ctl *diffcount_ctl_init(void)
 	return dc;
 }
 
-static FILE *fopen_and_seek(const char *filename, uint64_t seek)
+static FILE *fopen_and_seek(const char *filename, off_t seek)
 {
 	FILE *stream;
 
@@ -111,51 +111,48 @@ static off_t get_filesize(const char *filename)
 
 /* Fill buffers. Returns the number of bytes that are ready to be compared
    in the two buffers. */
-static uint64_t fill_buffers(struct diffcount_ctl *dc, FILE *stream_1,
-                             FILE *stream_2, uint8_t *buf_1, uint8_t *buf_2,
-                             uint64_t bytes_compared)
+static size_t fill_buffers(const struct diffcount_ctl *dc,
+                           FILE *stream_1, FILE *stream_2,
+			   uint8_t *buf_1, uint8_t *buf_2,
+                           unsigned long long bytes_compared)
 {
-	uint64_t buf_cnt, buf1_cnt, buf2_cnt, read_size;
+	size_t buf_fill, buf1_fill, buf2_fill, read_size;
 
 	if ((dc->max_len != 0) &&
 	    (dc->max_len - bytes_compared) < BUFSIZE) {
 		/* Read size limited by user-specified max_len */
-		read_size = dc->max_len - bytes_compared;
+		read_size = (size_t)(dc->max_len - bytes_compared);
 	} else {
 		/* Try to read the full BUFSIZE */
 		read_size = BUFSIZE;
 	}
 
-	buf1_cnt = fread(buf_1, 1, read_size, stream_1);
+	buf1_fill = fread(buf_1, 1, read_size, stream_1);
 
 	if (dc->const_mode == 1) {
 		/* In const mode, buffer count is whatever we managed to read
 		   from the first stream */
-		buf_cnt = buf1_cnt;
+		buf_fill = buf1_fill;
 	} else {
-		buf2_cnt = fread(buf_2, 1, read_size,
-				 stream_2);
+		buf2_fill = fread(buf_2, 1, read_size, stream_2);
 		/* Return the lesser of the number of bytes that we
 		   successfuly read from each of the two streams. */
-		buf_cnt = buf1_cnt < buf2_cnt ?
-			    buf1_cnt : buf2_cnt;
+		buf_fill = buf1_fill < buf2_fill ? buf1_fill : buf2_fill;
 	}
 
-	return buf_cnt;
+	return buf_fill;
 }
 
-static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
+static struct diffcount_res *diffcount(const struct diffcount_ctl *dc)
 {
 	FILE *stream_1 = NULL, *stream_2 = NULL;
-	uint8_t *buf_1, *buf_2;
-
-	uint8_t byte_xor;
-	uint64_t ctr, buf_cnt, quad_xor;
-
+	uint8_t *buf_1, *buf_2, byte_xor;
+	uint64_t quad_xor;
+	unsigned long long buf_idx, buf_fill;
+	struct diffcount_res *dr;
 	/* Better performance using independent local variables. Assigned
 	   to the struct before returning */
-	uint64_t comp_B = 0, diff_B = 0, diff_b = 0;
-	struct diffcount_res *dr;
+	unsigned long long comp_B = 0, diff_B = 0, diff_b = 0;
 
 	stream_1 = fopen_and_seek(dc->fname_1, dc->seek_1);
 	if (dc->const_mode == 0) {
@@ -170,39 +167,39 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 		memset(buf_2, dc->const_val, BUFSIZE);
 	}
 
-	buf_cnt = 0;
-	ctr = 0;
+	buf_fill = 0;
+	buf_idx = 0;
 	while(1) {
 		/* Fill up the buffer if we're at the end */
-		if (ctr == buf_cnt) {
+		if (buf_idx == buf_fill) {
 			/* TODO: Threads for better performance? */
-			buf_cnt = fill_buffers(dc, stream_1, stream_2, buf_1,
-			                       buf_2, comp_B);
+			buf_fill = fill_buffers(dc, stream_1, stream_2, buf_1,
+			                        buf_2, comp_B);
 
-			/* If buf_cnt is zero, we have no new data to compare,
+			/* If buf_fill is zero, we have no new data to compare,
 			   either because we already read up to max_len, or
 			   because we encountered EOF in either or both of
 			   the streams. Either way, we're done.*/
-			if (buf_cnt == 0) break;
-			ctr = 0;
+			if (buf_fill == 0) break;
+			buf_idx = 0;
 		}
 
-		if ((buf_cnt - ctr) >= 8) {
+		if ((buf_fill - buf_idx) >= 8) {
 			/* Process 8 bytes at a time */
-			quad_xor = *(uint64_t *)(buf_1 + ctr) ^
-			           *(uint64_t *)(buf_2 + ctr);
+			quad_xor = *(uint64_t *)(buf_1 + buf_idx) ^
+			           *(uint64_t *)(buf_2 + buf_idx);
 			for (int i = 0; i < 8; i++) {
 				diff_B += (((quad_xor >> (8*i)) & 0xff) != 0);
 			}
 			diff_b += _mm_popcnt_u64(quad_xor);
-			ctr += 8;
+			buf_idx += 8;
 			comp_B += 8;
 		} else {
 			/* Clean up any remaining bytes */
-			byte_xor = buf_1[ctr]^buf_2[ctr];
+			byte_xor = buf_1[buf_idx] ^ buf_2[buf_idx];
 			diff_B += byte_xor != 0;
 			diff_b += _mm_popcnt_u32(byte_xor);
-			ctr++;
+			buf_idx++;
 			comp_B++;
 		}
 	}
@@ -221,9 +218,10 @@ static struct diffcount_res *diffcount(struct diffcount_ctl *dc)
 	return dr;
 }
 
-static void print_results(struct diffcount_ctl *dc, struct diffcount_res *dr)
+static void print_results(const struct diffcount_ctl *dc,
+                          const struct diffcount_res *dr)
 {
-	uint64_t fsize_1, fsize_2;
+	unsigned long long fsize_1, fsize_2;
 
 	fsize_1 = get_filesize(dc->fname_1);
 
@@ -272,7 +270,6 @@ static void show_help(char **argv, int verbose)
 	}
 	exit(EXIT_FAILURE);
 }
-
 
 int main(int argc, char **argv) 
 {

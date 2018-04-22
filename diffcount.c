@@ -43,7 +43,7 @@ struct diffcount_ctl {
 	unsigned long long seek_1;   /* Seek value for file 1 */
 	unsigned long long seek_2;   /* Seek value for file 2 */
 	unsigned long long max_len;  /* Maximum number of bytes to compare.
-	                      Go to first EOF if zero. */
+	                                Go to first EOF if zero. */
 	cmp_mode_type cmp_mode;
 	uint8_t const_val; /* Constant byte value */
 };

@@ -34,7 +34,7 @@
 typedef enum {
 	CMP_FILE, /* Compare to another file */
 	CMP_CONST /* Compare to a constant byte */
-} cmp_mode_type;
+} cmp_mode_t;
 
 /* Diffcount control */
 struct diffcount_ctl {
@@ -44,7 +44,7 @@ struct diffcount_ctl {
 	unsigned long long seek_2;   /* Seek value for file 2 */
 	unsigned long long max_len;  /* Maximum number of bytes to compare.
 	                                Go to first EOF if zero. */
-	cmp_mode_type cmp_mode;
+	cmp_mode_t cmp_mode;
 	uint8_t const_val; /* Constant byte value */
 };
 
@@ -68,6 +68,7 @@ static void *malloc_or_die(size_t size)
 	return buf;
 }
 
+/* Initialize struct diffcount_ctl and set defaults */
 static struct diffcount_ctl *diffcount_ctl_init(void)
 {
 	struct diffcount_ctl *dc;

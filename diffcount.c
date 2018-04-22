@@ -31,6 +31,11 @@
 #include <sys/stat.h>
 #include <smmintrin.h>
 
+typedef enum {
+	CMP_FILE, /* Compare to another file */
+	CMP_CONST /* Compare to a constant byte */
+} cmp_mode_type;
+
 /* Diffcount control */
 struct diffcount_ctl {
 	char *fname_1;
@@ -39,8 +44,7 @@ struct diffcount_ctl {
 	unsigned long long seek_2;   /* Seek value for file 2 */
 	unsigned long long max_len;  /* Maximum number of bytes to compare.
 	                      Go to first EOF if zero. */
-	int const_mode;    /* 0: Compare two files.
-                              1: Compare file to constant byte */
+	cmp_mode_type cmp_mode;
 	uint8_t const_val; /* Constant byte value */
 };
 
@@ -74,8 +78,7 @@ static struct diffcount_ctl *diffcount_ctl_init(void)
 	dc->seek_1 = 0;
 	dc->seek_2 = 0;
 	dc->max_len = 0;
-	dc->const_mode = 0;
-	dc->const_val = 0;
+	dc->cmp_mode = CMP_FILE;
 
 	return dc;
 }
@@ -84,14 +87,13 @@ static FILE *fopen_and_seek(const char *filename, off_t seek)
 {
 	FILE *stream;
 
-	if ((stream = fopen(filename, "r")) == NULL) {
-		fprintf(stderr, "fopen %s: %s\n",
-		        filename, strerror(errno));
+	stream = fopen(filename, "r");
+	if (stream == NULL) {
+		fprintf(stderr, "fopen %s: %s\n", filename, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 	if (fseeko(stream, seek, 0) == -1) {
-		fprintf(stderr, "fseeko %s: %s", filename,
-		        strerror(errno));
+		fprintf(stderr, "fseeko %s: %s", filename, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 	return stream;
@@ -118,8 +120,7 @@ static size_t fill_buffers(const struct diffcount_ctl *dc,
 {
 	size_t buf_fill, buf1_fill, buf2_fill, read_size;
 
-	if ((dc->max_len != 0) &&
-	    (dc->max_len - bytes_compared) < BUFSIZE) {
+	if ((dc->max_len != 0) && (dc->max_len - bytes_compared) < BUFSIZE) {
 		/* Read size limited by user-specified max_len */
 		read_size = (size_t)(dc->max_len - bytes_compared);
 	} else {
@@ -129,7 +130,7 @@ static size_t fill_buffers(const struct diffcount_ctl *dc,
 
 	buf1_fill = fread(buf_1, 1, read_size, stream_1);
 
-	if (dc->const_mode == 1) {
+	if (dc->cmp_mode == CMP_CONST) {
 		/* In const mode, buffer count is whatever we managed to read
 		   from the first stream */
 		buf_fill = buf1_fill;
@@ -155,17 +156,14 @@ static struct diffcount_res *diffcount(const struct diffcount_ctl *dc)
 	unsigned long long comp_B = 0, diff_B = 0, diff_b = 0;
 
 	stream_1 = fopen_and_seek(dc->fname_1, dc->seek_1);
-	if (dc->const_mode == 0) {
+	if (dc->cmp_mode == CMP_FILE)
 		stream_2 = fopen_and_seek(dc->fname_2, dc->seek_2);
-	}
 
 	buf_1 = malloc_or_die(BUFSIZE);
 	buf_2 = malloc_or_die(BUFSIZE);
 
 	/* Fill buffer 2 with the constant value in constant mode */
-	if (dc->const_mode == 1) {
-		memset(buf_2, dc->const_val, BUFSIZE);
-	}
+	if (dc->cmp_mode == CMP_CONST) memset(buf_2, dc->const_val, BUFSIZE);
 
 	buf_fill = 0;
 	buf_idx = 0;
@@ -225,19 +223,15 @@ static void print_results(const struct diffcount_ctl *dc,
 
 	fsize_1 = get_filesize(dc->fname_1);
 
-	if (dc->const_mode == 0) {
-		fsize_2 = get_filesize(dc->fname_2);
-	}
+	if (dc->cmp_mode == CMP_FILE) fsize_2 = get_filesize(dc->fname_2);
 
-	printf("File 1: %s\n"
-	       "  Size: %llu (0x%llx) bytes\n"
-	       "  Offset: %llu (0x%llx) bytes\n",
-	       dc->fname_1, fsize_1, fsize_1, dc->seek_1, dc->seek_1);
-	if (dc->const_mode == 0) {
-		printf("File 2: %s\n"
-		       "  Size: %llu (0x%llx) bytes\n"
-		       "  Offset: %llu (0x%llx) bytes\n",
-		       dc->fname_2, fsize_2, fsize_2,
+	printf("File 1: %s\n", dc->fname_1);
+	printf("  Size: %llu (0x%llx) bytes\n", fsize_1, fsize_1);
+	printf("  Offset: %llu (0x%llx) bytes\n", dc->seek_1, dc->seek_1);
+	if (dc->cmp_mode == CMP_FILE) {
+		printf("File 2: %s\n", dc->fname_2);
+		printf("  Size: %llu (0x%llx) bytes\n", fsize_2, fsize_2);
+		printf("  Offset: %llu (0x%llx) bytes\n",
 		       dc->seek_2, dc->seek_2);
 	} else {
 		printf("Compared to constant value 0x%02hhx\n",
@@ -284,7 +278,7 @@ int main(int argc, char **argv)
 	while ((opt = getopt(argc, argv, "chn:")) != -1) {
 		switch (opt) {
 		case 'c':
-			dc->const_mode = 1;
+			dc->cmp_mode = CMP_CONST;
 			break;
 		case 'h':
 			show_help(argv, 1);
@@ -300,7 +294,7 @@ int main(int argc, char **argv)
 	if ((argc - optind) < 2) show_help(argv, 0);
 	dc->fname_1 = argv[optind++];
 
-	if (dc->const_mode)
+	if (dc->cmp_mode == CMP_CONST)
 		dc->const_val = strtoul(argv[optind++], NULL, 0);
 	else
 		dc->fname_2 = argv[optind++];
